@@ -55,6 +55,119 @@
 - Python 3.10+
 - `uv`（推荐）或 `pip`
 
+## 首次使用：从安装到运行
+
+第一次接触这个项目，按下面步骤做就可以直接跑起来。
+
+### 1. 获取代码
+
+```bash
+git clone https://github.com/startuip/codex-console.git
+cd codex-console
+```
+
+如果你用的是自己的 fork 或别的仓库地址，把上面的 URL 换成你自己的即可。
+
+### 2. 安装 Python
+
+- 需要 Python 3.10 或更高版本
+- Windows 安装时建议勾选 `Add Python to PATH`
+
+安装完成后先确认版本：
+
+```bash
+python --version
+```
+
+### 3. 安装依赖
+
+```bash
+pip install -r requirements.txt
+```
+
+如果你使用 `uv`，也可以：
+
+```bash
+uv sync
+```
+
+### 4. 准备运行目录
+
+项目首次启动时会自动创建下面这些目录和文件：
+
+- `data/`：数据库、运行数据
+- `logs/`：运行日志
+
+一般不需要手动创建，直接启动即可。
+
+### 5. 可选：复制环境配置
+
+如果你想提前修改端口、访问密码或数据库位置，可以先复制一份配置模板：
+
+```bash
+cp .env.example .env
+```
+
+Windows PowerShell 可以用：
+
+```powershell
+Copy-Item .env.example .env
+```
+
+然后按需修改 `.env`。
+
+### 6. 一键启动
+
+Windows 下推荐直接使用一键重启脚本：
+
+```bash
+restart_webui.bat
+```
+
+这个脚本会自动做下面几件事：
+
+1. 检查当前项目的 `webui.py` 是否已经在运行
+2. 如果发现旧进程，先结束旧进程
+3. 如果端口还被占用，继续清理占用进程
+4. 重新启动一个全新的 Web UI 实例
+
+如果你不想用脚本，也可以手动启动：
+
+```bash
+python webui.py --host 0.0.0.0 --port 8000
+```
+
+### 7. 打开页面
+
+启动成功后访问：
+
+- Web UI：首页 `http://localhost:8000`
+- 实时日志页：`http://localhost:8000/logs`
+
+默认访问密码是：
+
+```text
+admin123
+```
+
+### 8. 首次启动后建议检查
+
+建议首次运行后确认下面几项：
+
+- 能正常打开 Web UI 登录页
+- 能进入“实时日志”页面
+- `logs/app.log` 中没有明显报错
+- `settings` 页面里端口、密码和服务配置符合你的环境
+
+### 9. 常用运行文件
+
+- `restart_webui.bat`：Windows 一键重启启动脚本
+- `restart_webui.ps1`：脚本主逻辑
+- `webui.py`：手动启动入口
+- `logs/webui.stdout.log`：标准输出日志
+- `logs/webui.stderr.log`：错误日志
+- `logs/app.log`：应用运行日志
+
 ## 安装依赖
 
 ```bash
