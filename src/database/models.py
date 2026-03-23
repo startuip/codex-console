@@ -144,6 +144,25 @@ class CpaService(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
+class CpaAutoRefillRun(Base):
+    """CPA 自动补号运行记录"""
+    __tablename__ = 'cpa_auto_refill_runs'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    service_id = Column(Integer, ForeignKey('cpa_services.id'), index=True, nullable=True)
+    service_name = Column(String(100), nullable=False)
+    invalid_count = Column(Integer, default=0)
+    deleted_count = Column(Integer, default=0)
+    refill_requested_count = Column(Integer, default=0)
+    status = Column(String(50), default='pending')
+    message = Column(Text)
+    details = Column(JSONEncodedDict)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    service = relationship('CpaService')
+
+
 class Sub2ApiService(Base):
     """Sub2API 服务配置表"""
     __tablename__ = 'sub2api_services'

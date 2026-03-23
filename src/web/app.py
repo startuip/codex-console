@@ -18,6 +18,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 from ..config.settings import get_settings
+from ..core.cpa_auto_refill import cpa_auto_refill_scheduler
 from .routes import api_router
 from .routes.websocket import router as ws_router
 from .task_manager import task_manager
@@ -108,6 +109,7 @@ def create_app() -> FastAPI:
     async def login_page(request: Request, next: Optional[str] = "/"):
         """登录页面"""
         return templates.TemplateResponse(
+            request,
             "login.html",
             {"request": request, "error": "", "next": next or "/"}
         )
@@ -118,6 +120,7 @@ def create_app() -> FastAPI:
         expected = get_settings().webui_access_password.get_secret_value()
         if not secrets.compare_digest(password, expected):
             return templates.TemplateResponse(
+                request,
                 "login.html",
                 {"request": request, "error": "密码错误", "next": next or "/"},
                 status_code=401
@@ -139,33 +142,40 @@ def create_app() -> FastAPI:
         """首页 - 注册页面"""
         if not _is_authenticated(request):
             return _redirect_to_login(request)
-        return templates.TemplateResponse("index.html", {"request": request})
+        return templates.TemplateResponse(request, "index.html", {"request": request})
 
     @app.get("/accounts", response_class=HTMLResponse)
     async def accounts_page(request: Request):
         """账号管理页面"""
         if not _is_authenticated(request):
             return _redirect_to_login(request)
-        return templates.TemplateResponse("accounts.html", {"request": request})
+        return templates.TemplateResponse(request, "accounts.html", {"request": request})
 
     @app.get("/email-services", response_class=HTMLResponse)
     async def email_services_page(request: Request):
         """邮箱服务管理页面"""
         if not _is_authenticated(request):
             return _redirect_to_login(request)
-        return templates.TemplateResponse("email_services.html", {"request": request})
+        return templates.TemplateResponse(request, "email_services.html", {"request": request})
 
     @app.get("/settings", response_class=HTMLResponse)
     async def settings_page(request: Request):
         """设置页面"""
         if not _is_authenticated(request):
             return _redirect_to_login(request)
-        return templates.TemplateResponse("settings.html", {"request": request})
+        return templates.TemplateResponse(request, "settings.html", {"request": request})
+
+    @app.get("/logs", response_class=HTMLResponse)
+    async def logs_page(request: Request):
+        """实时日志页面"""
+        if not _is_authenticated(request):
+            return _redirect_to_login(request)
+        return templates.TemplateResponse(request, "logs.html", {"request": request})
 
     @app.get("/payment", response_class=HTMLResponse)
     async def payment_page(request: Request):
         """支付页面"""
-        return templates.TemplateResponse("payment.html", {"request": request})
+        return templates.TemplateResponse(request, "payment.html", {"request": request})
 
     @app.on_event("startup")
     async def startup_event():
@@ -182,6 +192,7 @@ def create_app() -> FastAPI:
         # 设置 TaskManager 的事件循环
         loop = asyncio.get_event_loop()
         task_manager.set_loop(loop)
+        cpa_auto_refill_scheduler.start()
 
         logger.info("=" * 50)
         logger.info(f"{settings.app_name} v{settings.app_version} 启动中，程序正在伸懒腰...")
@@ -192,6 +203,7 @@ def create_app() -> FastAPI:
     @app.on_event("shutdown")
     async def shutdown_event():
         """应用关闭事件"""
+        await cpa_auto_refill_scheduler.stop()
         logger.info("应用关闭，今天先收摊啦")
 
     return app

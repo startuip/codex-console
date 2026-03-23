@@ -4,6 +4,7 @@
 
 import logging
 import os
+from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException
@@ -15,6 +16,8 @@ from ...database.session import get_db
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+SUPPORTED_LOG_LEVELS = {"ALL", "DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
 
 
 # ============== Pydantic Models ==============
@@ -343,35 +346,112 @@ async def cleanup_database(
     }
 
 
+def _resolve_log_path(log_file: str) -> Path:
+    """解析运行时日志文件路径。"""
+    log_path = Path(log_file)
+    if log_path.is_absolute():
+        return log_path
+
+    app_logs_dir = os.environ.get("APP_LOGS_DIR")
+    if app_logs_dir:
+        candidate = Path(app_logs_dir) / log_path.name
+        if candidate.exists() or not log_path.exists():
+            return candidate
+
+    return log_path
+
+
+def _filter_log_lines(all_lines, level: str = "ALL", keyword: Optional[str] = None):
+    """按级别和关键字筛选日志。"""
+    normalized_level = (level or "ALL").upper()
+    if normalized_level not in SUPPORTED_LOG_LEVELS:
+        normalized_level = "ALL"
+
+    normalized_keyword = (keyword or "").strip().lower()
+    filtered_lines = []
+
+    for raw_line in all_lines:
+        line = raw_line.rstrip("\r\n")
+        if normalized_level != "ALL" and f"[{normalized_level}]" not in line:
+            continue
+        if normalized_keyword and normalized_keyword not in line.lower():
+            continue
+        filtered_lines.append(line)
+
+    return filtered_lines, normalized_level, normalized_keyword
+
+
 @router.get("/logs")
 async def get_recent_logs(
-    lines: int = 100,
-    level: str = "INFO"
+    lines: int = 200,
+    level: str = "ALL",
+    keyword: Optional[str] = None,
+    offset: Optional[int] = None,
 ):
-    """获取最近日志"""
+    """获取最近日志，支持增量拉取。"""
     settings = get_settings()
 
     log_file = settings.log_file
     if not log_file:
-        return {"logs": [], "message": "日志文件未配置"}
+        return {
+            "logs": [],
+            "message": "日志文件未配置",
+            "total_lines": 0,
+            "next_offset": 0,
+            "reset": False,
+        }
 
-    from pathlib import Path
-    log_path = Path(log_file)
+    log_path = _resolve_log_path(log_file)
 
     if not log_path.exists():
-        return {"logs": [], "message": "日志文件不存在"}
+        return {
+            "logs": [],
+            "message": "日志文件不存在",
+            "file_path": str(log_path),
+            "total_lines": 0,
+            "next_offset": 0,
+            "reset": False,
+        }
 
     try:
         with open(log_path, "r", encoding="utf-8") as f:
             all_lines = f.readlines()
-            recent_lines = all_lines[-lines:]
+
+        filtered_lines, normalized_level, normalized_keyword = _filter_log_lines(
+            all_lines,
+            level=level,
+            keyword=keyword,
+        )
+
+        total_lines = len(filtered_lines)
+        normalized_lines = max(1, min(lines, 2000))
+        should_reset = offset is not None and (offset < 0 or offset > total_lines)
+
+        if offset is None or should_reset:
+            start = max(total_lines - normalized_lines, 0)
+            recent_lines = filtered_lines[start:]
+        else:
+            recent_lines = filtered_lines[offset:]
 
         return {
-            "logs": [line.strip() for line in recent_lines],
-            "total_lines": len(all_lines)
+            "logs": recent_lines,
+            "total_lines": total_lines,
+            "returned_lines": len(recent_lines),
+            "next_offset": total_lines,
+            "reset": should_reset,
+            "file_path": str(log_path),
+            "level": normalized_level,
+            "keyword": normalized_keyword,
         }
     except Exception as e:
-        return {"logs": [], "error": str(e)}
+        return {
+            "logs": [],
+            "error": str(e),
+            "file_path": str(log_path),
+            "total_lines": 0,
+            "next_offset": 0,
+            "reset": False,
+        }
 
 
 # ============== 临时邮箱设置 ==============

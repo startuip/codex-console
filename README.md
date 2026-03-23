@@ -88,6 +88,14 @@ cp .env.example .env
 
 ## 启动 Web UI
 
+Windows 一键重启脚本:
+
+```bash
+restart_webui.bat
+```
+
+这个脚本会先检查当前项目的 Web UI 是否已在运行，如果发现旧进程会先结束，再全新启动。
+
 ```bash
 # 默认启动（127.0.0.1:8000）
 python webui.py

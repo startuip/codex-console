@@ -8,6 +8,7 @@ from pydantic import BaseModel
 
 from ....database import crud
 from ....database.session import get_db
+from ....core.cpa_auto_refill import cpa_auto_refill_scheduler
 from ....core.upload.cpa_upload import test_cpa_connection
 
 router = APIRouter()
@@ -48,6 +49,10 @@ class CpaServiceResponse(BaseModel):
 class CpaServiceTestRequest(BaseModel):
     api_url: Optional[str] = None
     api_token: Optional[str] = None
+
+
+class CpaAutoRefillRunRequest(BaseModel):
+    service_id: Optional[int] = None
 
 
 def _to_response(svc) -> CpaServiceResponse:
@@ -169,3 +174,29 @@ async def test_cpa_connection_direct(request: CpaServiceTestRequest):
         raise HTTPException(status_code=400, detail="api_url 和 api_token 不能为空")
     success, message = test_cpa_connection(request.api_url, request.api_token)
     return {"success": success, "message": message}
+
+
+@router.post("/auto-refill/run")
+async def run_cpa_auto_refill_now(request: Optional[CpaAutoRefillRunRequest] = None):
+    """立即执行一次 CPA 失效账号扫描和补号。"""
+    request = request or CpaAutoRefillRunRequest()
+
+    if request.service_id is not None:
+        with get_db() as db:
+            service = crud.get_cpa_service_by_id(db, request.service_id)
+            if not service:
+                raise HTTPException(status_code=404, detail="CPA 服务不存在")
+            if not service.api_url or not service.api_token:
+                raise HTTPException(status_code=400, detail="CPA 服务缺少 API URL 或 Token")
+
+        results = await cpa_auto_refill_scheduler.run_for_service(request.service_id, include_disabled=True)
+        if not results:
+            raise HTTPException(status_code=400, detail="指定的 CPA 服务当前不可执行自动补号")
+    else:
+        results = await cpa_auto_refill_scheduler.run_once()
+
+    return {
+        "success": True,
+        "count": len(results),
+        "results": [result.to_dict() for result in results],
+    }

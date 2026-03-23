@@ -562,6 +562,94 @@ body {
 }
 
 /* ============================================
+   实时日志页
+   ============================================ */
+
+.log-toolbar {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-md);
+    margin-bottom: var(--spacing-md);
+}
+
+.log-toolbar-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--spacing-md);
+    align-items: flex-end;
+}
+
+.log-toolbar-actions {
+    justify-content: space-between;
+}
+
+.log-action-group {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--spacing-sm);
+    align-items: center;
+}
+
+.log-field {
+    min-width: 160px;
+    margin-bottom: 0;
+}
+
+.log-field-wide {
+    flex: 1 1 320px;
+}
+
+.log-field-sm {
+    width: 140px;
+}
+
+.checkbox-inline {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--spacing-xs);
+    color: var(--text-secondary);
+    font-size: 0.875rem;
+}
+
+.checkbox-inline input {
+    margin: 0;
+}
+
+.log-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--spacing-md);
+    margin-bottom: var(--spacing-md);
+    color: var(--text-muted);
+    font-size: 0.875rem;
+}
+
+.system-log-viewer {
+    height: min(70vh, 820px);
+}
+
+.log-empty-state {
+    color: #7aa2f7;
+}
+
+@media (max-width: 768px) {
+    .log-field,
+    .log-field-wide,
+    .log-field-sm {
+        width: 100%;
+        flex: 1 1 100%;
+    }
+
+    .log-toolbar-actions {
+        align-items: stretch;
+    }
+
+    .log-action-group {
+        width: 100%;
+    }
+}
+
+/* ============================================
    状态徽章
    ============================================ */
 

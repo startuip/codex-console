@@ -108,3 +108,66 @@ def test_test_cpa_connection_uses_get_and_normalized_url(monkeypatch):
     assert message == "CPA 连接测试成功"
     assert calls[0]["url"] == "https://cpa.example.com/v0/management/auth-files"
     assert calls[0]["kwargs"]["headers"]["Authorization"] == "Bearer token-123"
+
+
+def test_list_cpa_auth_files_uses_normalized_url(monkeypatch):
+    calls = []
+
+    def fake_get(url, **kwargs):
+        calls.append({"url": url, "kwargs": kwargs})
+        return FakeResponse(
+            status_code=200,
+            payload={
+                "files": [
+                    {"name": "alive.json", "status": "ok"},
+                    {"name": "dead.json", "status_message": "401 Invalid"},
+                ]
+            },
+        )
+
+    monkeypatch.setattr(cpa_upload.cffi_requests, "get", fake_get)
+
+    success, files, message = cpa_upload.list_cpa_auth_files(
+        "https://cpa.example.com/v0/management",
+        "token-123",
+    )
+
+    assert success is True
+    assert message == "获取成功"
+    assert [item["name"] for item in files] == ["alive.json", "dead.json"]
+    assert calls[0]["url"] == "https://cpa.example.com/v0/management/auth-files"
+    assert calls[0]["kwargs"]["headers"]["Authorization"] == "Bearer token-123"
+
+
+def test_filter_unauthorized_cpa_auth_files_matches_401_status():
+    auth_files = [
+        {"name": "alive.json", "status": "ok"},
+        {"name": "dead.json", "status_message": "401 Invalid"},
+        {"name": "expired.json", "message": "Unauthorized token"},
+    ]
+
+    filtered = cpa_upload.filter_unauthorized_cpa_auth_files(auth_files)
+
+    assert [item["name"] for item in filtered] == ["dead.json", "expired.json"]
+
+
+def test_delete_cpa_auth_file_uses_name_query(monkeypatch):
+    calls = []
+
+    def fake_delete(url, **kwargs):
+        calls.append({"url": url, "kwargs": kwargs})
+        return FakeResponse(status_code=204)
+
+    monkeypatch.setattr(cpa_upload.cffi_requests, "delete", fake_delete)
+
+    success, message = cpa_upload.delete_cpa_auth_file(
+        "dead.json",
+        "https://cpa.example.com",
+        "token-123",
+    )
+
+    assert success is True
+    assert message == "删除成功"
+    assert calls[0]["url"] == "https://cpa.example.com/v0/management/auth-files"
+    assert calls[0]["kwargs"]["params"] == {"name": "dead.json"}
+    assert calls[0]["kwargs"]["headers"]["Authorization"] == "Bearer token-123"

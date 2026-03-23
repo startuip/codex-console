@@ -48,7 +48,7 @@ def _build_cpa_headers(api_token: str, content_type: Optional[str] = None) -> di
 
 
 def _extract_cpa_error(response) -> str:
-    error_msg = f"上传失败: HTTP {response.status_code}"
+    error_msg = f"请求失败: HTTP {response.status_code}"
     try:
         error_detail = response.json()
         if isinstance(error_detail, dict):
@@ -56,6 +56,105 @@ def _extract_cpa_error(response) -> str:
     except Exception:
         error_msg = f"{error_msg} - {response.text[:200]}"
     return error_msg
+
+
+def _coerce_cpa_auth_files(payload: Any) -> List[Dict[str, Any]]:
+    """兼容不同返回格式，抽出 auth-files 列表。"""
+    if isinstance(payload, list):
+        return [item for item in payload if isinstance(item, dict)]
+
+    if isinstance(payload, dict):
+        for key in ("files", "items", "data"):
+            value = payload.get(key)
+            if isinstance(value, list):
+                return [item for item in value if isinstance(item, dict)]
+
+    return []
+
+
+def list_cpa_auth_files(api_url: str, api_token: str) -> Tuple[bool, List[Dict[str, Any]], str]:
+    """列出 CPA auth-files 账号。"""
+    if not api_url:
+        return False, [], "CPA API URL 未配置"
+    if not api_token:
+        return False, [], "CPA API Token 未配置"
+
+    list_url = _normalize_cpa_auth_files_url(api_url)
+
+    try:
+        response = cffi_requests.get(
+            list_url,
+            headers=_build_cpa_headers(api_token),
+            proxies=None,
+            timeout=15,
+            impersonate="chrome110",
+        )
+    except cffi_requests.exceptions.ConnectionError as e:
+        return False, [], f"无法连接到 CPA 服务: {str(e)}"
+    except cffi_requests.exceptions.Timeout:
+        return False, [], "请求 CPA 服务超时"
+    except Exception as e:
+        logger.error("获取 CPA auth-files 列表异常: %s", e)
+        return False, [], f"获取 auth-files 列表异常: {str(e)}"
+
+    if response.status_code != 200:
+        return False, [], _extract_cpa_error(response)
+
+    try:
+        payload = response.json()
+    except Exception as e:
+        return False, [], f"解析 CPA auth-files 响应失败: {str(e)}"
+
+    return True, _coerce_cpa_auth_files(payload), "获取成功"
+
+
+def is_unauthorized_cpa_auth_file(auth_file: Dict[str, Any]) -> bool:
+    """判断 auth-file 是否为 401 失效账号。"""
+    status_blob = " ".join(
+        str(auth_file.get(key) or "")
+        for key in ("status", "status_message", "message", "error")
+    ).lower()
+    return "401" in status_blob or "unauthorized" in status_blob
+
+
+def filter_unauthorized_cpa_auth_files(auth_files: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """筛出 401 失效账号。"""
+    return [auth_file for auth_file in auth_files if is_unauthorized_cpa_auth_file(auth_file)]
+
+
+def delete_cpa_auth_file(name: str, api_url: str, api_token: str) -> Tuple[bool, str]:
+    """按文件名删除单个 CPA auth-file。"""
+    normalized_name = (name or "").strip()
+    if not normalized_name:
+        return False, "auth-file 名称不能为空"
+    if not api_url:
+        return False, "CPA API URL 未配置"
+    if not api_token:
+        return False, "CPA API Token 未配置"
+
+    delete_url = _normalize_cpa_auth_files_url(api_url)
+
+    try:
+        response = cffi_requests.delete(
+            delete_url,
+            params={"name": normalized_name},
+            headers=_build_cpa_headers(api_token),
+            proxies=None,
+            timeout=15,
+            impersonate="chrome110",
+        )
+    except cffi_requests.exceptions.ConnectionError as e:
+        return False, f"无法连接到 CPA 服务: {str(e)}"
+    except cffi_requests.exceptions.Timeout:
+        return False, "请求 CPA 服务超时"
+    except Exception as e:
+        logger.error("删除 CPA auth-file 异常: %s", e)
+        return False, f"删除 auth-file 异常: {str(e)}"
+
+    if response.status_code in (200, 204):
+        return True, "删除成功"
+
+    return False, _extract_cpa_error(response)
 
 
 def _post_cpa_auth_file_multipart(upload_url: str, filename: str, file_content: bytes, api_token: str):
