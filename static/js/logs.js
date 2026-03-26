@@ -1,239 +1,309 @@
-const elements = {
-    logViewer: document.getElementById('system-log-viewer'),
-    logLevel: document.getElementById('log-level'),
-    logKeyword: document.getElementById('log-keyword'),
-    logLines: document.getElementById('log-lines'),
-    applyFilterBtn: document.getElementById('apply-filter-btn'),
-    refreshLogBtn: document.getElementById('refresh-log-btn'),
-    cpaFilterBtn: document.getElementById('cpa-filter-btn'),
-    pauseLogBtn: document.getElementById('pause-log-btn'),
-    clearLogViewBtn: document.getElementById('clear-log-view-btn'),
-    autoScrollToggle: document.getElementById('auto-scroll-toggle'),
-    logStreamStatus: document.getElementById('log-stream-status'),
-    logFilePath: document.getElementById('log-file-path'),
-    logTotalLines: document.getElementById('log-total-lines'),
-    logLastUpdated: document.getElementById('log-last-updated'),
+/**
+ * 后台日志页面
+ */
+
+const logsState = {
+    page: 1,
+    pageSize: 100,
+    total: 0,
+    autoRefreshSeconds: 10,
+    timer: null,
+    lastKeywordBeforeCpa: "",
+    filters: {
+        level: "",
+        logger_name: "",
+        keyword: "",
+        since_minutes: "",
+    },
 };
 
-const state = {
-    nextOffset: null,
-    paused: false,
-    pollTimer: null,
-    pollIntervalMs: 2000,
-    loading: false,
-    lastKeywordBeforeCpa: '',
+const el = {
+    filterLevel: document.getElementById("filter-level"),
+    filterLogger: document.getElementById("filter-logger"),
+    filterKeyword: document.getElementById("filter-keyword"),
+    filterSinceMinutes: document.getElementById("filter-since-minutes"),
+    autoRefreshSeconds: document.getElementById("auto-refresh-seconds"),
+    pageSizeSelect: document.getElementById("page-size-select"),
+    refreshBtn: document.getElementById("refresh-logs-btn"),
+    clearFiltersBtn: document.getElementById("clear-filters-btn"),
+    cpaFilterBtn: document.getElementById("cpa-filter-btn"),
+    cleanupBtn: document.getElementById("cleanup-logs-btn"),
+    clearLogsBtn: document.getElementById("clear-logs-btn"),
+    cleanupRetentionDays: document.getElementById("cleanup-retention-days"),
+    cleanupMaxRows: document.getElementById("cleanup-max-rows"),
+    logConsole: document.getElementById("log-console"),
+    summary: document.getElementById("logs-summary"),
+    pageInfo: document.getElementById("page-info"),
+    prevPageBtn: document.getElementById("prev-page-btn"),
+    nextPageBtn: document.getElementById("next-page-btn"),
+    latestLogTime: document.getElementById("latest-log-time"),
+    statTotal: document.getElementById("stat-total"),
+    statInfo: document.getElementById("stat-info"),
+    statWarning: document.getElementById("stat-warning"),
+    statError: document.getElementById("stat-error"),
+    statCritical: document.getElementById("stat-critical"),
 };
 
-document.addEventListener('DOMContentLoaded', () => {
-    initEventListeners();
-    loadLogs({ reset: true, showToast: false });
-    startPolling();
-});
-
-function initEventListeners() {
-    elements.applyFilterBtn.addEventListener('click', () => {
-        loadLogs({ reset: true, showToast: false });
-    });
-
-    elements.refreshLogBtn.addEventListener('click', () => {
-        loadLogs({ reset: true, showToast: true });
-    });
-
-    elements.cpaFilterBtn.addEventListener('click', () => {
-        const isCpaMode = elements.logKeyword.value.trim() === 'CPA Auto Refill';
-
-        if (isCpaMode) {
-            elements.logKeyword.value = state.lastKeywordBeforeCpa;
-            elements.cpaFilterBtn.textContent = '只看 CPA 自动补号';
-        } else {
-            state.lastKeywordBeforeCpa = elements.logKeyword.value.trim();
-            elements.logKeyword.value = 'CPA Auto Refill';
-            elements.cpaFilterBtn.textContent = '返回全部日志';
-        }
-
-        loadLogs({ reset: true, showToast: false });
-    });
-
-    elements.pauseLogBtn.addEventListener('click', () => {
-        state.paused = !state.paused;
-        elements.pauseLogBtn.textContent = state.paused ? '继续滚动' : '暂停滚动';
-        setStreamStatus(state.paused ? 'warning' : 'active', state.paused ? '已暂停' : '实时中');
-
-        if (!state.paused) {
-            loadLogs({ reset: false, showToast: false });
-        }
-    });
-
-    elements.clearLogViewBtn.addEventListener('click', () => {
-        renderLogs([]);
-    });
-
-    elements.autoScrollToggle.addEventListener('change', () => {
-        if (elements.autoScrollToggle.checked) {
-            scrollLogsToBottom();
-        }
-    });
-
-    elements.logKeyword.addEventListener('keydown', (event) => {
-        if (event.key === 'Enter') {
-            event.preventDefault();
-            loadLogs({ reset: true, showToast: false });
-        }
-    });
+function escapeHtml(value) {
+    const div = document.createElement("div");
+    div.textContent = String(value ?? "");
+    return div.innerHTML;
 }
 
-function startPolling() {
-    stopPolling();
-    state.pollTimer = setInterval(() => {
-        if (!state.paused) {
-            loadLogs({ reset: false, showToast: false });
-        }
-    }, state.pollIntervalMs);
+function getLevelClass(level) {
+    const text = String(level || "").toUpperCase();
+    return `log-level ${text}`;
 }
 
-function stopPolling() {
-    if (state.pollTimer) {
-        clearInterval(state.pollTimer);
-        state.pollTimer = null;
+function isCpaFilterActive() {
+    return String(el.filterKeyword?.value || "").trim() === "CPA Auto Refill";
+}
+
+function syncCpaFilterButton() {
+    if (!el.cpaFilterBtn) {
+        return;
     }
+    el.cpaFilterBtn.textContent = isCpaFilterActive() ? "返回全部日志" : "只看 CPA 自动补号";
 }
 
-async function loadLogs({ reset = false, showToast = false } = {}) {
-    if (state.loading) {
+function setLogsSummary() {
+    const from = logsState.total === 0 ? 0 : ((logsState.page - 1) * logsState.pageSize + 1);
+    const to = Math.min(logsState.total, logsState.page * logsState.pageSize);
+    el.summary.textContent = `共 ${logsState.total} 条，当前 ${from}-${to}`;
+    el.pageInfo.textContent = `第 ${logsState.page} 页`;
+    el.prevPageBtn.disabled = logsState.page <= 1;
+    el.nextPageBtn.disabled = to >= logsState.total;
+}
+
+function renderLogs(rows) {
+    if (!Array.isArray(rows) || rows.length === 0) {
+        el.logConsole.innerHTML = `
+            <div class="log-line">
+                <span class="log-time">-</span>
+                <span class="log-level INFO">INFO</span>
+                <span class="log-logger">system</span>
+                <span class="log-message">暂无日志</span>
+            </div>
+        `;
         return;
     }
 
-    state.loading = true;
+    el.logConsole.innerHTML = rows.map((row) => {
+        const level = String(row.level || "INFO").toUpperCase();
+        const msg = row.exception ? `${row.message || ""}\n${row.exception}` : (row.message || "");
+        return `
+            <div class="log-line">
+                <span class="log-time">${escapeHtml(format.date(row.created_at))}</span>
+                <span class="${getLevelClass(level)}">${escapeHtml(level)}</span>
+                <span class="log-logger" title="${escapeHtml(row.logger || "")}">${escapeHtml(row.logger || "-")}</span>
+                <span class="log-message">${escapeHtml(msg || "-")}</span>
+            </div>
+        `;
+    }).join("");
+}
+
+function collectFilters() {
+    logsState.filters.level = String(el.filterLevel.value || "").trim().toUpperCase();
+    logsState.filters.logger_name = String(el.filterLogger.value || "").trim();
+    logsState.filters.keyword = String(el.filterKeyword.value || "").trim();
+    logsState.filters.since_minutes = String(el.filterSinceMinutes.value || "").trim();
+    syncCpaFilterButton();
+}
+
+function buildLogParams() {
+    collectFilters();
+    const params = new URLSearchParams({
+        page: String(logsState.page),
+        page_size: String(logsState.pageSize),
+    });
+    if (logsState.filters.level) params.set("level", logsState.filters.level);
+    if (logsState.filters.logger_name) params.set("logger_name", logsState.filters.logger_name);
+    if (logsState.filters.keyword) params.set("keyword", logsState.filters.keyword);
+    if (logsState.filters.since_minutes) params.set("since_minutes", logsState.filters.since_minutes);
+    return params.toString();
+}
+
+async function loadLogs(silent = false) {
+    if (!silent) {
+        loading.show(el.refreshBtn, "加载中...");
+    }
+    try {
+        const query = buildLogParams();
+        const data = await api.get(`/logs?${query}`);
+        logsState.total = Number(data.total || 0);
+        renderLogs(data.logs || []);
+        setLogsSummary();
+    } catch (error) {
+        toast.error(`加载日志失败: ${error?.message || error}`);
+    } finally {
+        if (!silent) {
+            loading.hide(el.refreshBtn);
+        }
+    }
+}
+
+async function loadStats(silent = false) {
+    try {
+        const data = await api.get("/logs/stats");
+        const levels = data.levels || {};
+        el.statTotal.textContent = format.number(data.total || 0);
+        el.statInfo.textContent = format.number(levels.INFO || 0);
+        el.statWarning.textContent = format.number(levels.WARNING || 0);
+        el.statError.textContent = format.number(levels.ERROR || 0);
+        el.statCritical.textContent = format.number(levels.CRITICAL || 0);
+        el.latestLogTime.textContent = `最新日志: ${data.latest_at ? format.date(data.latest_at) : "-"}`;
+    } catch (error) {
+        if (!silent) {
+            toast.error(`加载统计失败: ${error?.message || error}`);
+        }
+    }
+}
+
+function resetFilters() {
+    el.filterLevel.value = "";
+    el.filterLogger.value = "";
+    el.filterKeyword.value = "";
+    el.filterSinceMinutes.value = "";
+    logsState.page = 1;
+    syncCpaFilterButton();
+    loadLogs();
+}
+
+function toggleCpaFilter() {
+    if (isCpaFilterActive()) {
+        el.filterKeyword.value = logsState.lastKeywordBeforeCpa;
+    } else {
+        logsState.lastKeywordBeforeCpa = String(el.filterKeyword.value || "").trim();
+        el.filterKeyword.value = "CPA Auto Refill";
+    }
+    logsState.page = 1;
+    syncCpaFilterButton();
+    loadLogs();
+}
+
+async function cleanupLogs() {
+    const retentionDays = Number(el.cleanupRetentionDays.value || 30);
+    const maxRows = Number(el.cleanupMaxRows.value || 50000);
+    const ok = await confirm(
+        `确认清理日志吗？\n保留天数=${retentionDays}，最大条数=${maxRows}`,
+        "清理后台日志"
+    );
+    if (!ok) return;
 
     try {
-        const query = new URLSearchParams({
-            lines: elements.logLines.value || '200',
-            level: elements.logLevel.value || 'ALL',
+        loading.show(el.cleanupBtn, "清理中...");
+        const data = await api.post("/logs/cleanup", {
+            retention_days: retentionDays,
+            max_rows: maxRows,
         });
-
-        const keyword = elements.logKeyword.value.trim();
-        if (keyword) {
-            query.set('keyword', keyword);
-        }
-
-        if (!reset && state.nextOffset !== null) {
-            query.set('offset', String(state.nextOffset));
-        }
-
-        const data = await api.get(`/settings/logs?${query.toString()}`);
-
-        if (data.error) {
-            throw new Error(data.error);
-        }
-
-        const logs = Array.isArray(data.logs) ? data.logs : [];
-
-        if (reset || state.nextOffset === null || data.reset) {
-            renderLogs(logs);
-        } else if (logs.length > 0) {
-            appendLogs(logs);
-        }
-
-        state.nextOffset = typeof data.next_offset === 'number' ? data.next_offset : state.nextOffset;
-
-        elements.logFilePath.textContent = data.file_path || '未配置';
-        elements.logTotalLines.textContent = String(data.total_lines || 0);
-        elements.logLastUpdated.textContent = formatDateTime(new Date());
-
-        if (!state.paused) {
-            setStreamStatus('active', '实时中');
-        }
-
-        if (showToast) {
-            toast.success(`日志已刷新，当前匹配 ${data.total_lines || 0} 行`);
-        }
+        toast.success(`清理完成：删除 ${data.deleted_total || 0} 条，剩余 ${data.remaining || 0} 条`);
+        logsState.page = 1;
+        await Promise.all([loadLogs(true), loadStats(true)]);
+        setLogsSummary();
     } catch (error) {
-        setStreamStatus('failed', '读取失败');
-        if (showToast) {
-            toast.error(error.message || '读取日志失败');
-        }
-        console.error('读取系统日志失败:', error);
+        toast.error(`清理失败: ${error?.message || error}`);
     } finally {
-        state.loading = false;
+        loading.hide(el.cleanupBtn);
     }
 }
 
-function renderLogs(logs) {
-    elements.logViewer.innerHTML = '';
+async function clearAllLogs() {
+    const ok = await confirm("确认清空全部后台日志吗？该操作不可恢复。", "清空后台日志");
+    if (!ok) return;
 
-    if (!logs.length) {
-        const line = document.createElement('div');
-        line.className = 'log-line info log-empty-state';
-        line.textContent = '[系统] 当前没有匹配条件的日志';
-        elements.logViewer.appendChild(line);
-        return;
+    try {
+        loading.show(el.clearLogsBtn, "清空中...");
+        const data = await api.delete("/logs?confirm=true");
+        toast.success(`清空完成：删除 ${data.deleted_total || 0} 条`);
+        logsState.page = 1;
+        await Promise.all([loadLogs(true), loadStats(true)]);
+        setLogsSummary();
+    } catch (error) {
+        toast.error(`清空失败: ${error?.message || error}`);
+    } finally {
+        loading.hide(el.clearLogsBtn);
     }
-
-    appendLogs(logs);
 }
 
-function appendLogs(logs) {
-    const emptyState = elements.logViewer.querySelector('.log-empty-state');
-    if (emptyState) {
-        emptyState.remove();
+function restartAutoRefresh() {
+    if (logsState.timer) {
+        clearInterval(logsState.timer);
+        logsState.timer = null;
     }
+    if (!logsState.autoRefreshSeconds) return;
+    logsState.timer = setInterval(() => {
+        loadLogs(true);
+        loadStats(true);
+    }, logsState.autoRefreshSeconds * 1000);
+}
 
-    logs.forEach((entry) => {
-        elements.logViewer.appendChild(createLogLine(entry));
+function bindEvents() {
+    el.refreshBtn.addEventListener("click", () => {
+        loadLogs();
+        loadStats();
+    });
+    el.clearFiltersBtn.addEventListener("click", resetFilters);
+    el.cpaFilterBtn?.addEventListener("click", toggleCpaFilter);
+    el.cleanupBtn.addEventListener("click", cleanupLogs);
+    el.clearLogsBtn?.addEventListener("click", clearAllLogs);
+
+    el.pageSizeSelect.addEventListener("change", () => {
+        logsState.pageSize = Number(el.pageSizeSelect.value || 100);
+        logsState.page = 1;
+        loadLogs();
+    });
+    el.prevPageBtn.addEventListener("click", () => {
+        if (logsState.page <= 1) return;
+        logsState.page -= 1;
+        loadLogs();
+    });
+    el.nextPageBtn.addEventListener("click", () => {
+        const maxPage = Math.max(1, Math.ceil(logsState.total / logsState.pageSize));
+        if (logsState.page >= maxPage) return;
+        logsState.page += 1;
+        loadLogs();
     });
 
-    if (elements.autoScrollToggle.checked) {
-        scrollLogsToBottom();
-    }
-}
+    [
+        el.filterLevel,
+        el.filterLogger,
+        el.filterKeyword,
+        el.filterSinceMinutes,
+    ].forEach((node) => {
+        node.addEventListener("change", () => {
+            logsState.page = 1;
+            syncCpaFilterButton();
+            loadLogs();
+        });
+    });
+    el.filterLogger.addEventListener("input", debounce(() => {
+        logsState.page = 1;
+        syncCpaFilterButton();
+        loadLogs(true);
+    }, 300));
+    el.filterKeyword.addEventListener("input", debounce(() => {
+        logsState.page = 1;
+        syncCpaFilterButton();
+        loadLogs(true);
+    }, 300));
 
-function createLogLine(entry) {
-    const line = document.createElement('div');
-    line.className = `log-line ${detectLogType(entry)}`;
-
-    const match = entry.match(/^(\d{4}-\d{2}-\d{2} [\d:,]+)\s+(.*)$/);
-    if (match) {
-        const timestamp = document.createElement('span');
-        timestamp.className = 'timestamp';
-        timestamp.textContent = match[1];
-        line.appendChild(timestamp);
-        line.append(document.createTextNode(match[2]));
-    } else {
-        line.textContent = entry;
-    }
-
-    return line;
-}
-
-function detectLogType(entry) {
-    const upper = String(entry || '').toUpperCase();
-
-    if (upper.includes('[ERROR]') || upper.includes('失败') || upper.includes('异常')) {
-        return 'error';
-    }
-    if (upper.includes('[WARNING]') || upper.includes('警告')) {
-        return 'warning';
-    }
-    if (upper.includes('[DEBUG]')) {
-        return 'debug';
-    }
-    if (upper.includes('成功') || upper.includes('已安排补号')) {
-        return 'success';
-    }
-    return 'info';
-}
-
-function setStreamStatus(type, text) {
-    elements.logStreamStatus.className = `status-badge ${type}`;
-    elements.logStreamStatus.textContent = text;
-}
-
-function scrollLogsToBottom() {
-    elements.logViewer.scrollTop = elements.logViewer.scrollHeight;
-}
-
-function formatDateTime(date) {
-    return date.toLocaleString('zh-CN', {
-        hour12: false,
+    el.autoRefreshSeconds.addEventListener("change", () => {
+        logsState.autoRefreshSeconds = Number(el.autoRefreshSeconds.value || 0);
+        restartAutoRefresh();
     });
 }
+
+document.addEventListener("DOMContentLoaded", async () => {
+    bindEvents();
+    syncCpaFilterButton();
+    await Promise.all([loadLogs(), loadStats()]);
+    logsState.autoRefreshSeconds = Number(el.autoRefreshSeconds.value || 0);
+    restartAutoRefresh();
+
+    window.addEventListener("beforeunload", () => {
+        if (logsState.timer) {
+            clearInterval(logsState.timer);
+            logsState.timer = null;
+        }
+    });
+});
